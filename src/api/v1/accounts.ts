@@ -523,13 +523,6 @@ app.get(
   async (c) => {
     const id = c.req.param("id");
     if (!isUuid(id)) return c.json({ error: "Record not found" }, 404);
-    // const tokenOwner = c.get("token").accountOwner;
-    // if (tokenOwner == null) {
-    //   return c.json(
-    //     { error: "This method requires an authenticated user" },
-    //     422,
-    //   );
-    // }
     const account = await db.query.accounts.findFirst({
       where: eq(accounts.id, id),
       with: {
