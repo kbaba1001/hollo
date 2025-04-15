@@ -242,9 +242,9 @@ app.patch(
     const successor =
       updatedAccounts[0].successorId == null
         ? null
-        : ((await db.query.accounts.findFirst({
+        : (await db.query.accounts.findFirst({
             where: eq(accounts.id, updatedAccounts[0].successorId),
-          })) ?? null);
+          })) ?? null;
     return c.json(
       serializeAccountOwner(
         {
@@ -508,8 +508,6 @@ app.get("/:id", async (c) => {
 
 app.get(
   "/:id/statuses",
-  tokenRequired,
-  scopeRequired(["read:statuses"]),
   zValidator(
     "query",
     timelineQuerySchema.merge(
@@ -525,26 +523,20 @@ app.get(
   async (c) => {
     const id = c.req.param("id");
     if (!isUuid(id)) return c.json({ error: "Record not found" }, 404);
-    const tokenOwner = c.get("token").accountOwner;
-    if (tokenOwner == null) {
-      return c.json(
-        { error: "This method requires an authenticated user" },
-        422,
-      );
-    }
+    // const tokenOwner = c.get("token").accountOwner;
+    // if (tokenOwner == null) {
+    //   return c.json(
+    //     { error: "This method requires an authenticated user" },
+    //     422,
+    //   );
+    // }
     const account = await db.query.accounts.findFirst({
       where: eq(accounts.id, id),
       with: {
         owner: true,
-        blocks: {
-          where: eq(blocks.blockedAccountId, tokenOwner.id),
-        },
       },
     });
     if (account == null) return c.json({ error: "Record not found" }, 404);
-    if (account.blocks.some((b) => b.blockedAccountId === tokenOwner.id)) {
-      return c.json([]);
-    }
     const [{ cnt }] = await db
       .select({ cnt: count() })
       .from(posts)
@@ -558,7 +550,7 @@ app.get(
         c.req.url,
         {
           documentLoader: await fedCtx.getDocumentLoader({
-            username: tokenOwner.handle,
+            username: account.handle,
           }),
           contextLoader: fedCtx.contextLoader,
           suppressError: true,
@@ -570,14 +562,12 @@ app.get(
     const following = await db
       .select({ id: follows.followingId })
       .from(follows)
-      .where(
-        and(eq(follows.followerId, tokenOwner.id), eq(follows.followingId, id)),
-      );
+      .where(and(eq(follows.followerId, id), eq(follows.followingId, id)));
     const postList = await db.query.posts.findMany({
       where: and(
         eq(posts.accountId, id),
         or(
-          eq(posts.accountId, tokenOwner.id),
+          eq(posts.accountId, id),
           eq(posts.visibility, "public"),
           eq(posts.visibility, "unlisted"),
           following.length > 0 ? eq(posts.visibility, "private") : undefined,
@@ -588,7 +578,7 @@ app.get(
               db
                 .select({ id: mentions.postId })
                 .from(mentions)
-                .where(eq(mentions.accountId, tokenOwner.id)),
+                .where(eq(mentions.accountId, id)),
             ),
           ),
         ),
@@ -600,7 +590,7 @@ app.get(
             .from(mutes)
             .where(
               and(
-                eq(mutes.accountId, tokenOwner.id),
+                eq(mutes.accountId, id),
                 or(
                   isNull(mutes.duration),
                   gt(
@@ -617,7 +607,7 @@ app.get(
           db
             .select({ accountId: blocks.blockedAccountId })
             .from(blocks)
-            .where(eq(blocks.accountId, tokenOwner.id)),
+            .where(eq(blocks.accountId, id)),
         ),
         // Hide the posts from the accounts who blocked the owner:
         notInArray(
@@ -625,7 +615,7 @@ app.get(
           db
             .select({ accountId: blocks.accountId })
             .from(blocks)
-            .where(eq(blocks.blockedAccountId, tokenOwner.id)),
+            .where(eq(blocks.blockedAccountId, id)),
         ),
         // Hide the shared posts from the muted accounts:
         or(
@@ -638,7 +628,7 @@ app.get(
               .innerJoin(mutes, eq(mutes.mutedAccountId, posts.accountId))
               .where(
                 and(
-                  eq(mutes.accountId, tokenOwner.id),
+                  eq(mutes.accountId, id),
                   or(
                     isNull(mutes.duration),
                     gt(
@@ -668,7 +658,7 @@ app.get(
         query.max_id == null ? undefined : lt(posts.id, query.max_id),
         query.min_id == null ? undefined : gt(posts.id, query.min_id),
       ),
-      with: getPostRelations(tokenOwner.id),
+      with: getPostRelations(id),
       orderBy: [desc(posts.published), desc(posts.id)],
       limit: limit + 1,
     });
@@ -678,9 +668,7 @@ app.get(
       next.searchParams.set("max_id", postList[limit].id);
     }
     return c.json(
-      postList
-        .slice(0, limit)
-        .map((p) => serializePost(p, tokenOwner, c.req.url)),
+      postList.slice(0, limit).map((p) => serializePost(p, c.req.url)),
       {
         headers: next == null ? undefined : { Link: `<${next}>; rel="next"` },
       },
